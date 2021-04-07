@@ -1,0 +1,324 @@
+---
+
+
+---
+
+# Lipos Debuts 
+
+
+```{r}
+
+# 1. Lectura de fitxers 
+#
+
+gc()
+rm(list=ls())
+
+# 0. Inicialització de parametres  -----------------------------
+
+conductor_variables<-here::here("variables_debuts.xls")
+
+```
+
+# Funcions
+
+```{r}
+
+# Funció que avalua els canvis pre post ---------------------
+test_pre_post<-function(pre,post,dt=dades){
+  # pre<-"VLDL_C"
+  # post<-"VLDL_C_FU"
+
+  test<-t.test(dt[[pre]],dt[[post]], paired=TRUE)
+  
+  numobs<-length(dt[[pre]])
+ 
+  dif_cohen<-effsize::cohen.d(dt[[pre]],dt[[post]], conf.level = 0.95,paired=T,na.rm=T)
+  
+  tibble(lipo=pre,pre=mean(dt[[pre]],na.rm = T),
+         post=mean(dt[[post]],na.rm = T),mean_change=test$estimate, cont.int1=test$conf.int[1], cont.int2=test$conf.int[2],p_value=test$p.value,
+         dif_st=dif_cohen$estimate,
+         dif_st_ci1=dif_cohen$conf.int[1],
+         dif_st_ci2=dif_cohen$conf.int[2]) 
+  }
+
+# funció que faci la correlació entre canvi de X (pre-post) versus canvi de Y (pre-post) 
+correlacio_Xcanvi_Ycanvi<-function(dt=dades,var1_pre="Weight",var1_post="Weight_FU",var2_pre="VLDL_C",var2_post="VLDL_C_FU",...){
+  # dt=dades
+  # var1_pre="Weight"
+  # var1_post="Weight_FU"
+  # var2_pre="VLDL_C"
+  # var2_post="VLDL_C_FU"
+  
+  dt<-dt %>% select(x_pre:=!!var1_pre,x_post:=!!var1_post,y_pre:=!!var2_pre, y_post:=!!var2_post)
+  dt<-dt %>% mutate(x=x_post-x_pre,y=y_pre-y_post)
+  
+  cor.test(dt$x,dt$y,...)$estimate
+  correlacio<-cor.test(dt$x,dt$y,...)$estimate
+  pvalor<-cor.test(dt$x,dt$y,...)$p.value
+  
+  tibble(Canvi.X=var1_pre,Canvi.Y=var2_pre,Cor.coef=correlacio,pvalor=pvalor)
+  
+}
+
+# Funció de valor vs canvi ---------------------
+# funció que faci la correlació entre canvi de pes versus canvi de lipos 
+correlacio_X_canvi<-function(dt=dades,var1_pre="Weight",var2_pre="VLDL_C",var2_post="VLDL_C_FU",...){
+  # dt=dades
+  # var1_pre="Weight"
+  # var1_post="Weight_FU"
+  # var2_pre="VLDL_C"
+  # var2_post="VLDL_C_FU"
+  
+  dt<-dt %>% select(x_pre:=!!var1_pre,y_pre:=!!var2_pre, y_post:=!!var2_post)
+  dt<-dt %>% mutate(x=x_pre,y=y_post-y_pre)
+  
+  cor.test(dt$x,dt$y,...)$estimate
+  correlacio<-cor.test(dt$x,dt$y,...)$estimate
+  pvalor<-cor.test(dt$x,dt$y,...)$p.value
+  
+  tibble(X=var1_pre,Canvi.Y=var2_pre,Cor.Pearson=correlacio,pvalor=pvalor)
+  
+}
+
+# Funció que generi ratio entre parells de variables
+
+
+```
+
+
+# Lectura de dades
+
+
+```{r}
+
+# Carregar funcions de lectura de dades ------------------
+link_source<-paste0("https://github.com/jrealgatius/Stat_codis/blob/master/funcions_propies.R","?raw=T")
+devtools::source_url(link_source)
+
+# Llegir arxiu Debuts -------------
+dades<-foreign::read.spss(here::here("dades","BD_Debuts_lipidomica_12.sav"),use.value.labels = T,to.data.frame = T)
+
+# Llegir 2n arxiu Controls -------------
+dades_2<-foreign::read.spss(here::here("dades","BD_Lipos_Controls_Debuts.sav"),use.value.labels = T,to.data.frame = T)
+
+# llegir dades noves
+dades_noves<-readxl::read_excel(here::here("dades","20210108_APOs_T1D.xlsx"))
+dades_noves<-netejar.noms.variables(dades_noves)[2:8]
+
+dades_noves<-dades_noves %>% 
+  mutate(temps=stringr::str_sub(ID,-1),
+         ID= stringr::str_sub(ID,1,-3))  %>% 
+  select(-c(Tubo,Nm._ID_tub)) %>% 
+  mutate(temps=if_else(temps=="1","pre","FU")) %>% 
+  pivot_wider(id_cols = c(ID,temps),
+              names_from = temps,
+              names_sep = "_",
+              values_from = c(ApoA_I_gL,ApoB_gL,NEFA_mM,Lpa_mgL)) 
+
+```
+
+# Reformat + Fusio
+
+```{r}
+# dades_2<-dades_2 %>% rename(ID=ID1)
+
+dades_total<-dades %>% mutate(debut=1) %>% bind_rows(mutate(dades_2,debut=0))
+
+rm(dades_2)
+
+# Ojo que No hi ha variable identificativa unica. S'ha de creat
+dades_total<-dades_total %>% mutate(id_unic=paste0(ID,Sex,Age,trunc(Weight)) %>% stringr::str_trim(side="both"))  
+
+
+```
+
+# Matching 
+
+> Aparearlos por age y BMI (y BMI_FU de los debuts) .. 1 o 2 controles por cada debut.
+
+> Aparellament per BMI en el seguiment (!!! Ull ¿?¿?¿?¿? incorrecte metodologicament)
+
+```{r}
+formuPS<-formula.text("match",y="debut",taulavariables = conductor_variables)
+
+var_PS<-extreure.variables("dtmatch",taulavariables = conductor_variables)
+
+dades_match<-dades_total %>% select("id_unic","debut",var_PS)
+
+# Controls sense BMI seguiment s'ha d'afegir BMI Basal 
+dades_match<-dades_match %>% mutate(BMI_FU=if_else(is.na(BMI_FU),BMI,BMI_FU))
+
+set.seed(125)
+descrTable(formuPS,data = dades_match)
+# MATCHING 
+
+formu<-formula.text(x="match",y="debut",taulavariables = conductor_variables)
+
+m.out<-matchit(as.formula(formu),method="nearest",data=dades_match,ratio=1,exact=c("Sex"))
+dades_match<-dades_match %>% bind_cols(ps=m.out$weights) 
+
+# Fusió de resta de variables i filtre
+dades_match<-select(dades_match,c("id_unic","ps")) %>% left_join(dades_total,by="id_unic") %>% filter(ps>0)
+
+# Verificació matching
+formuPS<-formula.text("dtmatch",y="debut",taulavariables = conductor_variables)
+descrTable(formuPS,data = dades_match)
+
+
+
+
+```
+
+
+
+# Recodes i calculs  ----------------------
+
+```{r}
+
+dades<-dades_match
+
+dades<-dades %>% mutate(
+  #  Ratios
+  ratio_LIPVLDLD=VLDL_C / VLDL_TG,
+  ratio_LIPIDL=IDL_C / IDL_TG,
+  ratio_LIPLDL=LDL_C / LDL_TG,
+  ratio_LIPHDL=HDL_C / HDL_TG,
+  # Sumatorios
+  PART_ATERO=VLDL_P_nmolL + LDL_P_nmolL,
+  COL_ATERO=VLDL_C + IDL_C + LDL_C,
+  ratio_ATERO=PART_ATERO/HDL_P_molL,
+  ratio_COLATERO=COL_ATERO/HDL_C,
+  # Remanente + ratios
+  remanente=COL_ATERO-LDL_C,
+  ratio_LDLP_C=LDL_P_nmolL/LDL_C,
+  ratio_VLDLP_TG=VLDL_P_nmolL/VLDL_TG,
+  ratio_VLDLP_C=VLDL_P_nmolL/VLDL_C,
+  ratio_HDLP_C=HDL_P_molL/HDL_C,
+  # Ratios seguimiento FU
+  ratio_LIPVLDLD_FU=VLDL_C_FU /VLDL_TG_FU,
+  ratio_LIPIDL_FU=IDL_C_FU / IDL_TG_FU,
+  ratio_LIPLDL_FU=LDL_C_FU /LDL_TG_FU,
+  ratio_LIPHDL_FU=HDL_C_FU /HDL_TG_FU,
+  # FU
+  PART_ATERO_FU=VLDL_P_nmolL_FU + LDL_P_nmolL_FU,
+  COL_ATERO_FU=VLDL_C_FU + IDL_C_FU + LDL_C_FU,
+  ratio_ATERO_FU=PART_ATERO_FU/HDL_P_molL_FU,
+  ratio_COLATERO_FU=COL_ATERO_FU/HDL_C_FU,
+  # Remanente ratios FU
+  remanente_FU=COL_ATERO_FU-LDL_C_FU,
+  ratio_LDLP_C_FU=LDL_P_nmolL_FU/LDL_C_FU,
+  ratio_VLDLP_TG_FU=VLDL_P_nmolL_FU/VLDL_TG_FU,
+  ratio_VLDLP_C_FU=VLDL_P_nmolL_FU/VLDL_C_FU,
+  ratio_HDLP_C_FU=HDL_P_molL_FU/HDL_C_FU
+  )
+
+# Calcular diferencia en el pes
+dades<-dades %>% mutate(canvi_pes=Weight_FU-Weight)
+
+
+
+```
+
+# Analisis descriptiva 
+
+```{r}
+
+
+descrTable(formula_compare("basals", "",taulavariables = conductor_variables),data=dades,extra.labels = c("","",""),max.xlev = 30)
+descrTable(formula_compare("quantis_basals", "",taulavariables = conductor_variables),method = 2,data=dades,extra.labels = c("","",""),max.xlev = 30)
+
+
+```
+
+
+# Comparativa pre-post ----------------
+# Capturo vars pre-post
+
+```{r, eval=FALSE}
+
+vars_pre=extreure.variables("clinic_pre",conductor_variables)
+vars_post=extreure.variables("clinic_post",conductor_variables)
+
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+# Calculo test
+
+dt_dif<-purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y))
+
+# Ajust de p valors multiple testing 
+dt_dif<-Pvalors_ajustats_taula(dt_dif,p.valors="p_value",metodo="BH")
+
+# FOREST PLOT sobre les diferencies Standarditzades
+dt_dif<-etiquetar_taula(dt_dif,taulavariables = conductor_variables,camp = "lipo")
+forest.plot.v2(dt_dif[1:26,],label="lipo",mean="dif_st",lower ="dif_st_ci1",upper="dif_st_ci2",label_X="Differences standardized (95% CI)", intercept=0)
+
+# Descriptiva pre-post 
+descrTable(formula_compare("clinic_pre", "",taulavariables = conductor_variables),data=dades,extra.labels = c("","",""),max.xlev = 30)
+descrTable(formula_compare("clinic_post", "",taulavariables = conductor_variables),data=dades,extra.labels = c("","",""),max.xlev = 30)
+
+
+```
+
+
+
+# Correlacions entre dif_pes vs lipos
+
+```{r}
+
+# Capturo vars pre-post
+lipos_pre=extreure.variables("lipos_pre",conductor_variables)
+lipos_post=extreure.variables("lipos_post",conductor_variables)
+
+# Calcular les correlacions dels canvis Pes vs canvis lipos+cliniques 
+
+# Weight
+# correlacio_canvi(dades,var1_pre="Weight",var1_post="Weight_FU",var2_pre="VLDL_C",var2_post="VLDL_C_FU")
+dt_corr_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="Weight",var1_post="Weight_FU",var2_pre = .x,var2_post=.y),method="spearman")
+
+dt_corr_X_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="Weight",var2_pre = .x,var2_post=.y,method="spearman"))
+
+#  HbA1c
+dt_corr_DIFHB_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="HbA1c",var1_post="Hba1c_FU",var2_pre = .x,var2_post=.y),method="spearman")
+dt_corr_HB_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="HbA1c",var2_pre = .x,var2_post=.y))
+
+#  Waist
+dt_corr_DIFWAIST_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="Waist",var1_post="Waist_FU",var2_pre = .x,var2_post=.y))
+dt_corr_WAIST_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="Waist",var2_pre = .x,var2_post=.y))
+
+#  Glucose
+dt_corr_DIFGlucose_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="Glucose",var1_post="GlucoseFU",var2_pre = .x,var2_post=.y))
+dt_corr_Glucose_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="Glucose",var2_pre = .x,var2_post=.y))
+
+#  Leukocytes
+dt_corr_DIFLeukocytes_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="Leukocytes",var1_post="Leukocytes_FU",var2_pre = .x,var2_post=.y))
+dt_corr_Leukocytes_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="Leukocytes",var2_pre = .x,var2_post=.y))
+
+#  GOT_AST
+dt_corr_DIFGOT_AST_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="GOT_AST",var1_post="GOT_AST_FU",var2_pre = .x,var2_post=.y))
+dt_corr_GOT_AST_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="GOT_AST",var2_pre = .x,var2_post=.y))
+
+#  GGT
+dt_corr_DIFGGT_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="GGT",var1_post="GGT_FU",var2_pre = .x,var2_post=.y))
+dt_corr_GGT_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="GGT",var2_pre = .x,var2_post=.y))
+
+#  GPT_ALT
+dt_corr_DIFGPT_ALT_canvis<-map2_df(lipos_pre,lipos_post,~correlacio_Xcanvi_Ycanvi(dt=dades,var1_pre="GPT_ALT",var1_post="GPT_ALT_FU",var2_pre = .x,var2_post=.y))
+dt_corr_GPT_ALT_canvi<-map2_df(lipos_pre,lipos_post,~correlacio_X_canvi(dt=dades,var1_pre="GPT_ALT",var2_pre = .x,var2_post=.y))
+
+
+
+```
+
+
+# Salvar imatge 
+
+```{r}
+save.image(here::here("resultats","resultats.RData"))
+
+
+```
+
+
+
+

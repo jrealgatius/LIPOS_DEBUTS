@@ -1,0 +1,769 @@
+---
+title: Identificación de nuevos biomarcadores de metabolismo lipídico en la aterosclerosis
+  diabética
+author: "Jordi Real"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+    fig_caption: yes
+    css: logos_css/usr_styles.css
+    includes:
+      in_header: header.html
+  pdf_document:
+    toc: yes
+website: https://github.com/jrealgatius/
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{=html}
+<script>
+   $(document).ready(function() {
+     $head = $('#header');
+     $head.prepend('<img src=\"https://www.idiapjgol.org/images/logo.png\" style=\"float: right ;width: 130px;\"/>')
+     $head.prepend('<img src=\"https://avatars2.githubusercontent.com/u/57066591?s=200&v=4\" style=\"text-align: center;margin:auto;width: 80px;\"/>')
+   });
+</script>
+```
+::: {.watermark}
+DRAFT
+:::
+
+------------------------------------------------------------------------
+
+```{r htmltemplate, echo=FALSE, warning=FALSE,message=FALSE}
+# ![](logoDAP_Cat.png)
+
+# htmltools::img(src = knitr::image_uri(file.path("logos_css", "logo.jpg")), 
+#                alt = 'logo', 
+#                style = 'position:absolute; top:-90px; right:1%; padding:5px;')
+
+img<-htmltools::img(src = knitr::image_uri(file.path("logos_css", "logo.jpg")), 
+               alt = 'logo', 
+               style = 'position:absolute; text-align: center;padding-right:150px;width: 185px;padding:10px;')
+
+# src="https://www.idiapjgol.org/images/logo.png" 
+# style= 'float: right ;width: 130px'
+# 
+# src="https://avatars2.githubusercontent.com/u/57066591?s=200&v=4"
+# style = 'text-align: center;;margin:auto;width: 80px'
+
+# padding-left:30px
+
+htmlhead <- paste0('
+  <script>
+  document.write(\'<div class="logos">',img,'</div>\')
+  </script>
+  ')
+
+# readr::write_lines(htmlhead)
+readr::write_lines(htmlhead, path = "header.html")
+
+
+```
+
+```{r setup, echo=F, include=F}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, include=F,size="huge",error = F)
+
+# Càrrega de libreries i funcions  --------------
+library(compareGroups)
+library(broom)
+library(kableExtra)
+library(ggplot2)
+library(dplyr)
+library(table1)
+
+# Carrega de dades y Rdata 
+load(here::here("resultats","resultats.RData"))
+
+conductor_variables<-here::here("variables_debuts.xls")
+
+# Fusió de dades_noves a dades 
+dades<-dades %>% 
+  mutate(ID=as.character(ID)) %>% 
+  netejar_espais() %>% 
+  left_join(netejar_espais(dades_noves),by="ID") 
+
+
+
+
+link_source<-paste0("https://github.com/jrealgatius/Stat_codis/blob/master/funcions_propies.R","?raw=T")
+devtools::source_url(link_source)
+
+
+```
+
+```{r funcions, include=FALSE}
+# Funció que avalua els canvis pre post ---------------------
+test_pre_post<-function(pre,post,dt=dades){
+  # pre<-"BMI"
+  # post<-"BMI_FU"
+  # dt=dades 
+
+  # Calculs
+  test<-t.test(dt[[pre]],dt[[post]], paired=TRUE)
+  
+  Nobs_pre<-dt[[pre]] %>% na.omit() %>% length()
+  Nobs_post<-dt[[post]] %>% na.omit() %>% length()
+  Nobs_dif<-(dt[[pre]]-dt[[post]]) %>% na.omit() %>% length()
+  sd_pre=stats::sd(dt[[pre]],na.rm = T)
+  sd_post=stats::sd(dt[[post]],na.rm = T)
+  
+  dif_cohen<-effsize::cohen.d(dt[[pre]],dt[[post]], conf.level = 0.95,paired=T,na.rm=T)
+  
+  tibble(lipo=pre,pre=mean(dt[[pre]],na.rm = T),
+         sd_pre=sd_pre,
+         post=mean(dt[[post]],na.rm = T),
+         sd_post=sd_post,
+         mean_change=test$estimate, cont.int1=test$conf.int[1], cont.int2=test$conf.int[2],p_value=test$p.value,
+         dif_st=dif_cohen$estimate,
+         dif_st_ci1=dif_cohen$conf.int[1],
+         dif_st_ci2=dif_cohen$conf.int[2],
+         Nobs_pre=Nobs_pre,
+         Nobs_post=Nobs_post,
+         Nobs_dif=Nobs_dif
+         ) 
+ 
+  }
+
+```
+
+```{r, include=TRUE}
+
+# extreure_pvalor_Signes_binomial(dades,vars_pre,vars_post)
+
+## Llista 2 parells de llistes de variables tipus pre-post i retorna un únic p-valor test del signes (canvi) de la binomial
+## S'espera que tots els canvis van cap al mateix sentit (o tots baixen o tots pujen)
+
+extreure_Pglobal_SigTest<-function(dt=dades,vars_pre=vars_pre,vars_post=vars_post) {
+ # vars_pre<-c("VLDL_C","IDL_C")
+ # vars_post<-c("VLDL_C_FU","IDL_C_FU")
+ # dt<-dades 
+  
+ # vars_pre<-vars_pre
+ # vars_post<-vars_post
+ # dt<-dades 
+
+ dt<-dt %>% mutate(id=1:n()) %>% 
+   select(id, vars_pre,vars_post) %>% 
+      rename_at(vars_pre,~paste0("var",c(1:length(vars_post)),"_pre")) %>% 
+      rename_at(vars_post,~paste0("var",c(1:length(vars_post)),"_pos")) %>% 
+   mutate_all(as.numeric)
+
+ longer<-dt %>% 
+   tidyr::pivot_longer(cols=-1, names_pattern = "(.*)(....)$", names_to = c("var", "temps")) %>% 
+    mutate(temps=if_else(temps=="_pre","0","1")) %>% 
+    tidyr::pivot_wider(id_cols = c(id,temps), names_from = var, values_from = value, names_repair = "check_unique") %>% 
+    na.omit() 
+ 
+ vars<-paste0("var",c(1:length(vars_post)))
+ 
+ dt_fi<-longer %>% group_by(id) %>% summarise_at(vars,list(dif=~.-lag(.))) %>% 
+   slice(2) %>% ungroup() %>% 
+   tidyr::pivot_longer(cols=-1) %>% 
+   filter (value!=0) # Elimino els empats
+
+ x<-sum(as.numeric(dt_fi$value>0))
+ n<-length(dt_fi$value)
+ 
+ test_bin<-binom.test(x,n,p=0.5)
+ if (test_bin$p.value<0.001) result="<0.001" else result=test_bin$p.value
+ 
+ return(result)
+   
+}
+
+```
+
+```{r mesrecodes}
+
+# Calcul de noves variables RATIOS EN dades (Predictive ratios of CVD risk)
+
+dades<-dades %>% mutate(rat_chol_hdlc=Total_cholesterol/HDL_C,
+                 rat_chol_hdlc_FU=Total_cholesterol_FU/HDL_C_FU,
+                 rat_ldlc_hdlc=LDL_C/HDL_C,
+                 rat_ldlc_hdlc_FU=LDL_C_FU/HDL_C_FU,
+                 rat_vldlc_ldlc_hdlc=(VLDL_C + LDL_C)/HDL_C,
+                 rat_vldlc_ldlc_hdlc_FU=(VLDL_C_FU + LDL_C_FU)/HDL_C_FU,
+                 rat_tri_hdld=Triglycerides/HDL_C,
+                 rat_tri_hdld_FU=Triglycerides_FU/HDL_C_FU)
+
+dades_match <- dades_match %>% mutate(rat_chol_hdlc=Total_cholesterol/HDL_C,
+                 rat_chol_hdlc_FU=Total_cholesterol_FU/HDL_C_FU,
+                 rat_ldlc_hdlc=LDL_C/HDL_C,
+                 rat_ldlc_hdlc_FU=LDL_C_FU/HDL_C_FU,
+                 rat_vldlc_ldlc_hdlc=(VLDL_C + LDL_C)/HDL_C,
+                 rat_vldlc_ldlc_hdlc_FU=(VLDL_C_FU + LDL_C_FU)/HDL_C_FU,
+                 rat_tri_hdld=Triglycerides/HDL_C,
+                 rat_tri_hdld_FU=Triglycerides_FU/HDL_C_FU)
+
+```
+
+```{r}
+
+## Calcular % relatius al total de cada particula VDL / HDL
+
+dades<-dades %>% mutate(
+  Large_VLDL_P_PER=(Large_VLDL_P_nmolL/VLDL_P_nmolL)*100,
+  Medium_VLDL_P_PER=(Medium_VLDL_P_nmolL/VLDL_P_nmolL)*100,
+  Small_VLDL_P_PER=(Small_VLDL_P_nmolL/VLDL_P_nmolL)*100,
+  
+  Large_LDL_P_PER = (Large_LDL_P_nmolL/LDL_P_nmolL)*100,
+  Medium_LDL_P_PER =(Medium_LDL_P_nmolL/LDL_P_nmolL)*100,
+  Small_LDL_P_PER = (Small_LDL_P_nmolL/LDL_P_nmolL)*100,
+  
+  Large_HDL_P_PER = (Large_HDL_P_molL/HDL_P_molL)*100,
+  Medium_HDL_P_PER = (Medium_HDL_P_molL/HDL_P_molL)*100,
+  Small_HDL_P_PER = (Small_HDL_P_molL/HDL_P_molL)*100,
+  
+  Large_VLDL_P_PER_FU=(Large_VLDL_P_nmolL_FU/VLDL_P_nmolL_FU)*100,
+  Medium_VLDL_P_PER_FU=(Medium_VLDL_P_nmolL_FU/VLDL_P_nmolL_FU)*100,
+  Small_VLDL_P_PER_FU=(Small_VLDL_P_nmolL_FU/VLDL_P_nmolL_FU)*100,
+  
+  Large_LDL_P_PER_FU = (Large_LDL_P_nmolL_FU/LDL_P_nmolL_FU)*100,
+  Medium_LDL_P_PER_FU =(Medium_LDL_P_nmolL_FU/LDL_P_nmolL_FU)*100,
+  Small_LDL_P_PER_FU = (Small_LDL_P_nmolL_FU/LDL_P_nmolL_FU)*100,
+  
+  Large_HDL_P_PER_FU = (Large_HDL_P_molL_FU/HDL_P_molL_FU)*100,
+  Medium_HDL_P_PER_FU = (Medium_HDL_P_molL_FU/HDL_P_molL_FU)*100,
+  Small_HDL_P_PER_FU = (Small_HDL_P_molL_FU/HDL_P_molL_FU)*100
+  )
+
+
+
+```
+
+```{r}
+# Calcular més ratios Suplementari tables
+
+# Basal 
+
+dades<-dades %>% mutate (rat2_vdlc_vdlp=VLDL_C/VLDL_P_nmolL, 
+                         rat2_vdlctg_vdlp=VLDL_TG/VLDL_P_nmolL,
+                         rat2_vdlc_vdlptg=VLDL_C/VLDL_TG,
+                         rat2_idlc_idltg=IDL_C/IDL_TG,
+                         rat2_ldlc_ldlp=LDL_C/LDL_P_nmolL,
+                         rat2_ldlTG_ldlp=LDL_TG/LDL_P_nmolL,
+                         rat2_ldlc_ldltg=LDL_C/LDL_TG,
+                         rat2_hdlC_hdlp=HDL_C/HDL_P_molL,
+                         rat2_hdltg_hdlp=LDL_TG/HDL_P_molL,
+                         rat2_hdlc_hdlptg=HDL_C/HDL_TG)
+
+
+# Follow-up
+dades<-dades %>% mutate (rat2_vdlc_vdlp_FU=VLDL_C_FU/VLDL_P_nmolL_FU, 
+                         rat2_vdlctg_vdlp_FU=VLDL_TG_FU/VLDL_P_nmolL_FU,
+                         rat2_vdlc_vdlptg_FU=VLDL_C_FU/VLDL_TG_FU,
+                         rat2_idlc_idltg_FU=IDL_C_FU/IDL_TG_FU,
+                         rat2_ldlc_ldlp_FU=LDL_C_FU/LDL_P_nmolL_FU,
+                         rat2_ldlTG_ldlp_FU=LDL_TG_FU/LDL_P_nmolL_FU,
+                         rat2_ldlc_ldltg_FU=LDL_C_FU/LDL_TG_FU,
+                         rat2_hdlC_hdlp_FU=HDL_C_FU/HDL_P_molL_FU,
+                         rat2_hdltg_hdlp_FU=LDL_TG_FU/HDL_P_molL_FU,
+                         rat2_hdlc_hdlptg_FU=HDL_C_FU/HDL_TG_FU)
+```
+
+```{r}
+
+# Generar noves variables amb info emplenada llista variables
+
+# Control con missing en seguimiento (FU) colocar Basal
+# Asignar valor basal de controles en columna FU 
+vars_pre<-extreure.variables("clinic_pre",conductor_variables)
+vars_post<-extreure.variables("clinic_post",conductor_variables)
+
+dades_temp<-
+  purrr::map2_dfc(vars_pre,vars_post,~transmute(dades,!!sym(.y):=if_else(is.na(!!sym(.y)) &  debut=="Control",!!sym(.x),!!sym(.y))))
+# Ara intercanviar columnes 2 a 2 de les noves dades generades
+dades[vars_post]<-dades_temp[vars_post]
+
+```
+
+```{r filtres, include=F}
+
+dades<-etiquetar_valors(dades,conductor_variables,fulla = "etiquetes")
+
+dades<-etiquetar(dades,taulavariables = conductor_variables)
+
+
+```
+
+# Study Objectives and Endpoints
+
+## The objective:
+
+1)  To study changes in circulating lipoprotein metabolism (LM) and the
+    lipidomic profile (LP) specifically associated to subclinical
+    diabetic atherosclerosis in patients with diabetes mellitus.
+
+------------------------------------------------------------------------
+
+# Actualizacions
+
+-   Març/2021:
+
+✓ Caldria modificar la "Figure 1” per “Standardized differences” <br/> 
+✓ Taula TS3: Comparativa amb grup control versus T1D --> caldria generar una idèntica on es mostrés la Comparativa amb grup control versus T1D post, és a dir després de normalitzar la glucèmia. <br/> 
+✓ Recorda ncloure la columna "standardized difference" <br/> 
+
+-   Febrer/2021:
+
+✓ Nou anàlisis: Taules segons article <br/> ✓ Calculades 110 variables
+noves <br/> ✓ Test global de signes per cada taula <br/> ✓ Nou forest
+plot <br/> ✓ Nou forest plot <br/>
+
+-   Agosto/2020:
+
+✓ Nuevo matching <br/> - Forzar exacto en relación Hombre/Mujer <br/> -
+Por IMC en seguimiento (**!!Metodológicamente cuestionable**) <br/> ✓
+Solucionado error en descriptiva comparativa pre-post HbA1c (Error de
+código) <br/> ✓ Etiquetas de caso control <br/> ✓ p valores entre grupos
+Controles vs Debuts Basal, Controles vs Debuts seguimiento
+(**!!Metodológicamente dudoso**) <br/> - Generar \>30 variables clínicas
+en controles sin seguimiento <br/> ✓ Añadir modelo ajustado por Peso
+basal de relación cambio de HB1A1c vs LIPOS <br/> ✓ Actualización nueva
+base de datos <br/> ✓ Numeración de tablas <br/>
+
+-   17/08/2020:
+
+✓ 0. Actualización de nueva base de datos <br/> ✓ 1. Matching por Edad,
+Sexo y BMI. Si no sale bien 1:2, hacer 1:1 <br/> ✓ 2. Hacer una tabla
+con los datos clínicos y de lipoproteínas de debuts: 1. al inicio, 2. al
+seguimiento (variables FU) y 3. los controles En la tabla utilizar
+mediana y el rango [5, 95] <br/> ✓ 3. Las gráficas del ejemplo que
+hiciste para HbA1c con todas las lipos y ratios <br/> ✓ 4. Las gráficas
+del ejemplo que hiciste para glucosa con todas las lipos y ratios <br/>
+
+-   07/2020:
+
+✓ Seleccionar grupo control apareado por age y BMI (r=1:2) controles por
+cada debut. <br/> ✓ Hacer tabla con los datos clínicos y de
+lipoproteínas de debuts al inicio, al seguimiento (variables FU) y de
+los controles <br/> ✓ Mediana y rango [5, 95] <br/> ✓ Cambio a
+coeficiente de correlación de Spearman menos sensible por Pearson) <br/>
+✓ Exemplo de plot de cambio de cada lipoproteoina y ratios (eje y) y el
+cambio de la HbA1c (eje x) (Ejemplo) <br/>
+
+-   23/01/2020:
+
+✓ Generadas 13 variables nuevas variables pre post <br/> ✓ Actualización
+de resultados descriptivo y comparativo <br/> ✓ Forest plot nuevas
+variables <br/> ✓ Añadido analisis pre-post de BMI + Weight <br/>
+
+-   2019:
+
+✓ Análisis pre-post de 52 variables clínicas continuas <br/> ✓
+Verificación de errores de variables clínicas continuas con valores
+vàlidos <br/> ✓ Correlación de Pearson de cambios de las: Glucosa,
+HbA1c, Peso, GOT, GPT, GTT, FLI, Cintura y Lekocytes vs cambios LIPOS.
+<br/> ✓ Reanalisis nueva base de datos <br/> ✓ Análisis pre-post de las
+variables clínicas también. <br/> ✓ Correlación de Pearson también con
+las variables clínicas: Glucosa, HbA1c, Peso, GOT, GPT, GTT, FLI,
+Cintura y Lekocytes. <br/> ✓ Exportación de base de datos <br/> ✓
+Generado conductor de variables <br/> ✓ Descriptivo de características
+basales <br/> ✓ t.test para evaluar cambios <br/> ✓ Ajuste multitesting
+<br/> ✓ Estandarización de diferencias (Cohen's D) <br/> ✓ Forest plot
+de diferencias estandardizadas <br/> ✓ Coeficiente de correlación de
+cambios del peso con cambios por cada una de las lipos <br/>
+
+------------------------------------------------------------------------
+
+## Table 1 article
+
+```{r, message=FALSE, warning=FALSE, include=T, echo=FALSE,size="huge"}
+## Recalcular diferencies i p- valors Taula 1 article
+
+vars_pre<-extreure.variables("T1_pre",conductor_variables)
+vars_post<-extreure.variables("T1_post",conductor_variables)
+
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+# Calculo test
+dt_dif<-purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt=dades %>% filter(debut=="Debut")))
+
+# # Ajust de p valors multiple testing 
+# dt_dif<-dt_dif %>% 
+#   Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) %>% round(4)
+# 
+dt_dif %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  etiquetar_taula(taulavariables = conductor_variables,camp = "lipo") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>% 
+  kable(caption = "T1. Evolución de lipoproteinas y variables clínicas evaluación de cambios",digits=3,label="ddd") %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+# Descriptiva Glucosa i HBA1c 
+vars_pre<-c("HbA1c","Glucose") 
+vars_post<-c("Hba1c_FU","GlucoseFU")
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt=dades %>% filter(debut=="Debut"))) %>% 
+  select(lipo,pre,sd_pre,post,sd_post,dif_st) %>% 
+  kable(caption = "T1. Cambio de HBA1C y glucosa",digits=3,label="ddd") %>% 
+  kable_styling()
+
+# descrTable(~HbA1c+Hba1c_FU,data=dades %>% filter(debut=="Debut")) %>% 
+#   export2md(title="HbA1c Pre and post")
+
+
+```
+
+## Table 2 article
+
+```{r, include=T}
+# Canvi escala de variables
+
+# Els valors els expressaria en mM; això implica dividir per 38.7 (colesterol) o 88.5 (triglicèrids) 
+# els valors d’un i altra #lípid per a cada classe de lipoproteïna
+vars_pre=extreure.variables("T2_pre",conductor_variables)
+vars_post=extreure.variables("T2_post",conductor_variables)
+vars<-c(vars_pre,vars_post)
+
+# Canvi d'escala dels valors TG i C
+dt<-dades %>% 
+  filter(debut=="Debut") %>% 
+  mutate_at(vars %>% stringr::str_subset("_TG"),~./88.5) %>%
+  mutate_at(vars %>% stringr::str_subset("_C"),~./38.7)
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) 
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "T2. Canvis en el contingut de les lipoproteines (nM) durant la optimització del control glicemic", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+  
+
+```
+
+## Table 3 article
+
+```{r, include=T}
+
+vars_pre=extreure.variables("T3_pre",conductor_variables)
+vars_post=extreure.variables("T3_post",conductor_variables)
+vars<-c(vars_pre,vars_post)
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+dt<-dades %>% 
+  filter(debut=="Debut") %>% 
+  select(id_unic,vars)
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) 
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "T3. Canvis en el contingut de les lipoproteines (nM) durant la optimització del control glicemic", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+```
+
+## Figure 1. Forest plot de las diferencias estandardizadas
+
+Quantification of the effect size magnitude is performed using the
+thresholds define in Cohen (1992). The magnitude is assessed using the
+thresholds provided in (Cohen 1992), i.e. \|d\|\<0.2 "negligible",
+\|d\|\<0.5 "small", \|d\|\<0.8 "medium", otherwise "large"
+
+-   Els punts més allunyats del 0 són els que tenen un canvi
+    proporcional major pre-post. Els que están fora de la banda grisa
+    (valor\>\|0.5\|) es pot considerar que el canvi es medium o large
+    segons llindars (thresholds) definits per Cohen
+
+```{r, message=FALSE, warning=FALSE, include=T, echo=F,size="huge"}
+
+vars_pre=extreure.variables("forest_pre",conductor_variables)
+vars_post=extreure.variables("forest_post",conductor_variables)
+vars<-c(vars_pre,vars_post)
+# Canvi d'escala dels valors TG i C
+dt<-dades %>% 
+  filter(debut=="Debut") %>% 
+  mutate_at(vars %>% stringr::str_subset("_TG"),~./88.5) %>%
+  mutate_at(vars %>% stringr::str_subset("_C"),~./38.7)
+
+# Calculo test
+dt_dif<-purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt))
+  
+# etiqueto taula
+dt_dif<-dt_dif %>% etiquetar_taula(camp="lipo",taulavariables = conductor_variables)
+
+forest_plot<-
+  forest.plot.v2(dt_dif,label="lipo",mean="dif_st",lower ="dif_st_ci1",upper="dif_st_ci2",
+               label_X="Standardized differences (95% CI)", intercept=0)+
+  theme_minimal()+ xlab("Lipoprotein")+
+  scale_y_continuous(breaks = seq(-1,2.5,0.5))+
+ 
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0.5, ymax = 0.8,fill="Medium: 0.5<|d|<0.8"),colour=NA,alpha=0.01)+
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = -0.5, ymax = 0.5,fill="Small:|d|<=0.5"),colour=NA,alpha=0.01)+
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0.8, ymax = Inf,fill="Large: |d|>=0.8"),colour=NA,alpha=0.01)+
+  
+  scale_fill_manual('Effect size band',
+                      values = c("red",'green','grey10'),  
+                      guide = guide_legend(override.aes = list(alpha = 0.1)))
+ 
+
+forest_plot
+
+ggsave(here::here("figures","forest_plot.tiff"),forest_plot,width = 14,height = 10,dpi = 150)
+
+ggsave(here::here("figures","forest_plot.jpg"),forest_plot)
+
+ 
+```
+
+# Suplementary tables
+
+## TS2
+
+-   No he trobat valors a la base de dades
+
+```{r}
+
+
+vars_pre=extreure.variables("ST2_pre",conductor_variables)
+vars_post=extreure.variables("ST2_post",conductor_variables)
+vars<-c(vars_pre,vars_post)
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+dt<-dades %>% 
+  filter(debut=="Debut") %>% 
+  select(id_unic,vars)
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) %>% round(3)
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "Ts2. Changes Main apolipoproteins and Lp(a) in T1D subjects", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+```
+
+## TS3
+
+Comparativa amb grup control versus T1D (post)
+
+```{r, include=TRUE}
+vars_post<-extreure.variables("T1_post",taulavariables = conductor_variables)
+vars_pre<-extreure.variables("T1_pre",taulavariables = conductor_variables)
+
+# Canvi de nom de variables post en controls
+dt_controls<-dades %>% filter(debut=="Control") %>% select(id_unic,debut,vars_pre) %>% 
+  rename_with(~paste0(.,"_FU"),vars_pre)
+dt_debuts<-dades %>% filter(debut=="Debut") %>% select(id_unic,debut,vars_post) 
+
+dt_temp<-dt_controls %>% rbind(dt_debuts)
+
+formu<-formula.text("T1_post",y="debut", taulavariables=conductor_variables) 
+
+
+# Objecte compareGroups + p valor 
+res<-compareGroups::compareGroups(formu,data=dt_temp) %>%  
+  Pvalors_ajustats_Update_Compare("p.overall",method ="BH")
+
+createTable(res,show.p.overall = T) %>% 
+  export2md(caption = "TS3. Descriptiva comparativa de Debuts verus controls")
+
+
+# Calculo dif estandarditzada
+
+dif_estandard<-function(x="sBP_FU",dt=dt_temp) {
+  effsize::cohen.d(paste0(x,"~debut") %>% as.formula(),data=dt, conf.level = 0.95,paired=F,na.rm=T)$estimate}
+
+purrr::map_dfr(vars_post,
+           ~dif_estandard(.x),.id="Parametre") %>% transmute(Parametre,StandardizedDiff=Debut) %>% 
+  kable(digits = 3) %>% kableExtra::kable_styling()
+
+
+```
+## TS3.2
+
+Comparativa amb grup control versus T1D (post) HB i glucosa
+
+
+```{r, include=TRUE}
+# Descriptiva Glucosa i HBA1c POST Control versus Debut
+dades<-
+  dades %>% mutate(Hba1c_FU=if_else(debut=="Control",HbA1c,Hba1c_FU),
+                 GlucoseFU=if_else(debut=="Control",Glucose,GlucoseFU)) 
+
+descrTable(debut~Hba1c_FU+GlucoseFU,data=dades, show.p.overall = T) %>%
+  export2md(caption = "HbA1c Glucose by grups Post insulina debuts")
+
+
+vars_post<-c("Hba1c_FU","GlucoseFU") %>% stats::setNames(c("Hba1c_FU","GlucoseFU"))
+purrr::map_dfr(vars_post,
+           ~dif_estandard(.x,dades),.id="Parametre") %>% transmute(Parametre,StandardizedDiff=Debut) %>% 
+  kable(digits = 3) %>% kableExtra::kable_styling()
+
+
+
+```
+
+## TS4
+
+-   Comparativa pre-post
+
+```{r, include=TRUE}
+vars_pre=extreure.variables("ST4_pre",conductor_variables)
+vars_post=extreure.variables("ST4_post",conductor_variables)
+
+dt<-dades %>% 
+  filter(debut=="Debut") 
+
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) 
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "TS4. Canvis en el contingut de les lipoproteines (nM) durant la optimització del control glicemic", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+
+```
+
+## TS5
+
+-   Comparativa amb grup control
+-   Calculades noves variables Lipos relatives % al total
+    Large/Medium+Small
+
+```{r, include=TRUE}
+
+vars_pre=extreure.variables("ST5_pre",conductor_variables)
+vars_post=extreure.variables("ST5_post",conductor_variables)
+
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+dt<-dades %>% 
+  filter(debut=="Debut") 
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) %>% round(3)
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "TS5. Relative (%) distribution by size of different and changes lipoprotein classes", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+
+```
+
+## TS6
+
+-   Calcular noves variables ratios
+
+```{r, include=TRUE}
+
+
+vars_pre=extreure.variables("ST6_pre",conductor_variables)
+vars_post=extreure.variables("ST6_post",conductor_variables)
+
+verifica_aparellamenta<-tibble(vars_pre,vars_post)
+
+dt<-dades %>% 
+  filter(debut=="Debut") 
+
+## Calculo p_valor global 
+pvalor_taula<-extreure_Pglobal_SigTest(dades,vars_pre,vars_post) %>% round(3)
+
+
+# Calculo test
+purrr::map2_df(vars_pre,vars_post,~test_pre_post(.x,.y,dt)) %>% 
+  Pvalors_ajustats_taula(p.valors="p_value",metodo="BH") %>% 
+  select(c(lipo,pre,sd_pre,post,sd_post,dif_st,p_value.BH)) %>%
+  kable(caption = "TS5. Relative (%) distribution by size of different and changes lipoprotein classes", digits = 3) %>% 
+  kable_styling() %>% 
+  add_footnote(paste0("Overall p-value by Sign test: ",pvalor_taula), notation="alphabet")
+
+
+```
+
+## S7 Figure 2
+
+Head map de correlacions de canvis de LIPO proteines versus canvis de
+variables clíniques : HBA1c (%), waist.....
+
+```{r, include=TRUE}
+
+dt<-dades %>% filter(debut=="Debut") 
+
+# Funció que calcula canvis pre post de parells de variables  ---------------------
+canvi_pre_post<-function(dt=dades,pre,post){
+  pre_sym<-dplyr::sym(pre)
+  post_sym<-dplyr::sym(post)
+  dades %>% transmute(!!pre_sym:=!!pre_sym-!!post_sym)}
+#  
+vars_pre<-c(extreure.variables("ST7_LipPre",conductor_variables),extreure.variables("ST7_ClinPre",conductor_variables))
+vars_post<-c(extreure.variables("ST7_LipPost",conductor_variables),extreure.variables("ST7_ClinPost",conductor_variables))
+# tibble(vars_pre,vars_post)
+
+# Calcular prepost de llistes de varibles
+dt_temp<-purrr::map2_dfc(vars_pre,vars_post,~canvi_pre_post(dt,.x,.y))
+# Fer correlacions
+
+vars1<-extreure.variables("ST7_LipPre",conductor_variables)
+vars2<-extreure.variables("ST7_ClinPre",conductor_variables)
+
+head_map<-extreure_cor_multi(dt,llistavar1 = vars1,llistavar2 = vars2, etiquetar = T,coductor_variables=conductor_variables,method = "square")
+
+head_map$plot
+
+ggsave(here::here("figures","corr_plot.tiff"),head_map$plot,width = 14,height = 10,dpi = 150)
+
+ggsave(here::here("figures","corr_plot.jpg"),head_map$plot)
+
+```
+
+
+<hr />
+
+<p style="text-align: center;">
+
+A work by $Jordi Real$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+$Llpali System$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+<em><https://github.com/jrealgatius/></em>
+
+</p>
